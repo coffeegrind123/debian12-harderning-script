@@ -21,14 +21,14 @@ A comprehensive security hardening solution for Debian 12 systems, providing bot
 
 This project provides two complementary security hardening scripts for Debian 12:
 
-1. **`install-fixed.sh`** - System-level hardening (kernel, firewall, applications)
+1. **`install.sh`** - System-level hardening (kernel, firewall, applications)
 2. **`systemd-hardening-script.sh`** - Service-level hardening (systemd services)
 
 Together, they provide **enterprise-grade security** with automated deployment and comprehensive protection against common attack vectors.
 
 ## ✨ Features
 
-### 🔧 System-Level Hardening (`install-fixed.sh`)
+### 🔧 System-Level Hardening (`install.sh`)
 
 - **Kernel Hardening**: 40+ sysctl security parameters
 - **Network Security**: nftables firewall with strict default-deny policy
@@ -53,14 +53,14 @@ Together, they provide **enterprise-grade security** with automated deployment a
 
 ```bash
 # 1. Clone or download the scripts
-wget https://raw.githubusercontent.com/your-repo/install-fixed.sh
+wget https://raw.githubusercontent.com/your-repo/install.sh
 wget https://raw.githubusercontent.com/your-repo/systemd-hardening-script.sh
 
 # 2. Make executable
-chmod +x install-fixed.sh systemd-hardening-script.sh
+chmod +x install.sh systemd-hardening-script.sh
 
 # 3. Run system hardening (as root)
-sudo ./install-fixed.sh
+sudo ./install.sh
 
 # 4. Run service hardening (as root)
 sudo ./systemd-hardening-script.sh
@@ -71,7 +71,7 @@ sudo systemd-analyze security
 
 ## 📜 Scripts Description
 
-### 🔧 System Hardening Script (`install-fixed.sh`)
+### 🔧 System Hardening Script (`install.sh`)
 
 Based on the **debian12-hardening-script** with additional improvements and **blakkheim's security guide**.
 
@@ -151,7 +151,7 @@ Custom-developed script implementing **template-based progressive hardening**.
 1. **Download Scripts:**
    ```bash
    # Option 1: Direct download
-   curl -O https://raw.githubusercontent.com/your-repo/install-fixed.sh
+   curl -O https://raw.githubusercontent.com/your-repo/install.sh
    curl -O https://raw.githubusercontent.com/your-repo/systemd-hardening-script.sh
    
    # Option 2: Clone repository
@@ -162,16 +162,16 @@ Custom-developed script implementing **template-based progressive hardening**.
 2. **Verify Scripts (Optional but Recommended):**
    ```bash
    # Check script integrity
-   sha256sum install-fixed.sh systemd-hardening-script.sh
+   sha256sum install.sh systemd-hardening-script.sh
    
    # Review scripts before execution
-   less install-fixed.sh
+   less install.sh
    less systemd-hardening-script.sh
    ```
 
 3. **Make Executable:**
    ```bash
-   chmod +x install-fixed.sh systemd-hardening-script.sh
+   chmod +x install.sh systemd-hardening-script.sh
    ```
 
 ## 🎮 Usage
@@ -180,7 +180,7 @@ Custom-developed script implementing **template-based progressive hardening**.
 
 ```bash
 # Step 1: System-level hardening (run first)
-sudo ./install-fixed.sh
+sudo ./install.sh
 
 # Step 2: Service-level hardening (run after system hardening)
 sudo ./systemd-hardening-script.sh
@@ -194,9 +194,9 @@ The system hardening script runs automatically but you can customize behavior:
 
 ```bash
 # Run with environment variables for customization
-SKIP_FIREJAIL=1 sudo ./install-fixed.sh              # Skip firejail (faster)
-DEBUG=1 sudo ./install-fixed.sh                      # Enable debug output  
-NO_REBOOT_PROMPT=1 sudo ./install-fixed.sh          # Skip reboot prompt
+SKIP_FIREJAIL=1 sudo ./install.sh              # Skip firejail (faster)
+DEBUG=1 sudo ./install.sh                      # Enable debug output  
+NO_REBOOT_PROMPT=1 sudo ./install.sh          # Skip reboot prompt
 ```
 
 #### Service Hardening Options
@@ -371,7 +371,7 @@ sudo apt autoclean
 sudo apt autoremove
 
 # Skip firejail installation (saves ~700MB)
-SKIP_FIREJAIL=1 sudo ./install-fixed.sh
+SKIP_FIREJAIL=1 sudo ./install.sh
 ```
 
 ### Debugging systemd Restrictions
