@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Complete Debian 12 Security Hardening Script
-# Based on my original script + blakkheim's guide (https://vez.mrsk.me/linux-hardening)
+# Complete Debian 12 Security Hardening Script - Fixed Version
+# Based on original script + blakkheim's guide (https://vez.mrsk.me/linux-hardening)
 # Run as root or with sudo privileges
 
 set -euo pipefail
@@ -33,7 +33,7 @@ basic_hardening() {
     
     export PATH=$PATH:/usr/sbin
     apt update
-    apt install -y cron sudo curl wget passwd apache2-utils
+    apt install -y cron sudo curl wget passwd apache2-utils procps util-linux
     
     # Create debian user if not exists
     sudo useradd -m -s /bin/bash debian 2>/dev/null || true
@@ -42,12 +42,15 @@ basic_hardening() {
     
     # Core dump protection
     printf '* hard core 0\n* soft core 0' | sudo tee -a /etc/security/limits.conf
-    printf 'fs.suid_dumpable=0\nkernel.core_pattern=|/bin/false' | sudo tee -a /etc/sysctl.d/9999-disable-core-dump.conf
-    sudo sysctl -p /etc/sysctl.d/9999-disable-core-dump.conf
+    
+    # Create sysctl.d directory if it doesn't exist
+    sudo mkdir -p /etc/sysctl.d
+    printf 'fs.suid_dumpable=0\nkernel.core_pattern=|/bin/false' | sudo tee /etc/sysctl.d/9999-disable-core-dump.conf
+    sudo sysctl -p /etc/sysctl.d/9999-disable-core-dump.conf 2>/dev/null || warn "Could not apply sysctl settings (may require reboot)"
     
     sudo mkdir -p /etc/systemd/coredump.conf.d/
-    printf '[Coredump]\nStorage=none\nProcessSizeMax=0' | sudo tee -a /etc/systemd/coredump.conf.d/custom.conf
-    sudo systemctl daemon-reload
+    printf '[Coredump]\nStorage=none\nProcessSizeMax=0' | sudo tee /etc/systemd/coredump.conf.d/custom.conf
+    sudo systemctl daemon-reload 2>/dev/null || warn "Could not reload systemd daemon"
 }
 
 # Original nftables firewall (preserved)
@@ -73,17 +76,21 @@ nftables_firewall() {
     
     sudo mkdir -p /etc/nftables
     sudo nft list ruleset > /etc/nftables/nftables.conf
-    sudo systemctl enable nftables
+    sudo systemctl enable nftables 2>/dev/null || warn "Could not enable nftables service"
 }
 
-# Enhanced package manager security
+# Enhanced package manager security - fixed for modern Debian
 package_security() {
     log "Configuring secure package sources..."
     
-    # Backup original sources.list
-    sudo cp /etc/apt/sources.list /etc/apt/sources.list.backup
+    # Handle modern Debian sources format
+    if [ -f /etc/apt/sources.list ]; then
+        sudo cp /etc/apt/sources.list /etc/apt/sources.list.backup
+    elif [ -f /etc/apt/sources.list.d/debian.sources ]; then
+        sudo cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.backup
+    fi
     
-    # Configure HTTPS-only mirrors
+    # Configure HTTPS-only mirrors - create traditional sources.list
     sudo tee /etc/apt/sources.list > /dev/null <<EOF
 # Debian 12 (bookworm) - HTTPS only sources
 deb https://deb.debian.org/debian/ bookworm main contrib non-free-firmware
@@ -96,6 +103,9 @@ deb https://deb.debian.org/debian/ bookworm-updates main contrib non-free-firmwa
 deb-src https://deb.debian.org/debian/ bookworm-updates main contrib non-free-firmware
 EOF
     
+    # Remove the new format file to avoid conflicts
+    sudo rm -f /etc/apt/sources.list.d/debian.sources
+    
     apt update
 }
 
@@ -104,7 +114,7 @@ kernel_hardening() {
     log "Applying kernel hardening parameters..."
     
     # Install kernel hardening packages
-    apt install -y linux-headers-$(uname -r)
+    apt install -y linux-headers-$(uname -r) 2>/dev/null || warn "Could not install kernel headers"
     
     # Create comprehensive sysctl configuration (exact from blakkheim guide)
     sudo tee /etc/sysctl.d/99-sysctl.conf > /dev/null <<'EOF'
@@ -223,24 +233,28 @@ vm.mmap_rnd_compat_bits=16
 EOF
     
     # Apply sysctl settings
-    sudo sysctl -p /etc/sysctl.d/99-sysctl.conf
+    sudo sysctl -p /etc/sysctl.d/99-sysctl.conf 2>/dev/null || warn "Some sysctl settings could not be applied (may require reboot)"
     
-    # Configure kernel boot parameters
-    log "Configuring kernel boot parameters..."
-    
-    # Backup GRUB configuration
-    sudo cp /etc/default/grub /etc/default/grub.backup
-    
-    # Add security kernel parameters (exact from blakkheim guide)
-    KERNEL_PARAMS="apparmor=1 init_on_alloc=1 init_on_free=1 l1tf=full,force l1d_flush=on gather_data_sampling=force spec_rstack_overflow=ibpb lockdown=confidentiality lsm=landlock,lockdown,yama,apparmor page_alloc.shuffle=1 slab_nomerge spec_store_bypass_disable=on spectre_v2=on vsyscall=none randomize_kstack_offset=1"
-    
-    # Update GRUB configuration
-    sudo sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"\([^\"]*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_PARAMS\"/" /etc/default/grub
-    
-    # Update GRUB
-    sudo update-grub
-    
-    warn "Kernel parameters updated. Reboot required for changes to take effect."
+    # Configure kernel boot parameters - skip in container
+    if [ -f /etc/default/grub ]; then
+        log "Configuring kernel boot parameters..."
+        
+        # Backup GRUB configuration
+        sudo cp /etc/default/grub /etc/default/grub.backup
+        
+        # Add security kernel parameters (exact from blakkheim guide)
+        KERNEL_PARAMS="apparmor=1 init_on_alloc=1 init_on_free=1 l1tf=full,force l1d_flush=on gather_data_sampling=force spec_rstack_overflow=ibpb lockdown=confidentiality lsm=landlock,lockdown,yama,apparmor page_alloc.shuffle=1 slab_nomerge spec_store_bypass_disable=on spectre_v2=on vsyscall=none randomize_kstack_offset=1"
+        
+        # Update GRUB configuration
+        sudo sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"\([^\"]*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_PARAMS\"/" /etc/default/grub
+        
+        # Update GRUB
+        sudo update-grub 2>/dev/null || warn "Could not update GRUB"
+        
+        warn "Kernel parameters updated. Reboot required for changes to take effect."
+    else
+        warn "No GRUB configuration found - skipping kernel parameters (container environment)"
+    fi
 }
 
 # Application sandboxing
@@ -249,16 +263,16 @@ application_sandboxing() {
     
     # Install and configure AppArmor
     apt install -y apparmor apparmor-utils apparmor-profiles apparmor-profiles-extra
-    sudo systemctl enable apparmor
-    sudo systemctl start apparmor
+    sudo systemctl enable apparmor 2>/dev/null || warn "Could not enable AppArmor"
+    sudo systemctl start apparmor 2>/dev/null || warn "Could not start AppArmor"
     
     # Install Firejail
     apt install -y firejail
     
     # Configure Firejail (exact from blakkheim guide)
-    sudo systemctl enable --now apparmor
-    sudo apparmor_parser -r /etc/apparmor.d/firejail-default
-    sudo firecfg
+    sudo systemctl enable --now apparmor 2>/dev/null || warn "Could not enable AppArmor service"
+    sudo apparmor_parser -r /etc/apparmor.d/firejail-default 2>/dev/null || warn "Could not load Firejail AppArmor profile"
+    sudo firecfg 2>/dev/null || warn "Could not configure Firejail"
     echo "debian" | sudo tee /etc/firejail/firejail.users > /dev/null
     
     # Update PATH for firejail (exact from guide)
@@ -271,11 +285,15 @@ application_sandboxing() {
 enhanced_ssh() {
     log "Enhancing SSH configuration..."
     
+    # Install SSH if not present
+    apt install -y openssh-server
+    
     sudo groupadd -f ssh-user
     sudo usermod -aG sudo debian
     sudo usermod -aG ssh-user debian
     
     # Enhanced SSH configuration (original but cleaned up)
+    sudo mkdir -p /etc/ssh/sshd_config.d
     sudo tee /etc/ssh/sshd_config.d/10-sshd.conf > /dev/null <<'EOF'
 AddressFamily inet
 HostKey /etc/ssh/ssh_host_rsa_key
@@ -307,7 +325,7 @@ EOF
     sudo chmod 600 /home/debian/.ssh/authorized_keys
     sudo chown -R debian:debian /home/debian/.ssh
     
-    sudo systemctl restart sshd
+    sudo systemctl restart sshd 2>/dev/null || sudo systemctl restart ssh 2>/dev/null || warn "Could not restart SSH service"
 }
 
 # Enhanced sudo configuration (exact from blakkheim guide)
@@ -315,7 +333,8 @@ enhanced_sudo() {
     log "Configuring enhanced sudo settings..."
     
     # Sudo logging (original)
-    printf 'Defaults        logfile="/var/log/sudo.log"' | sudo tee -a /etc/sudoers.d/log
+    sudo mkdir -p /etc/sudoers.d
+    printf 'Defaults        logfile="/var/log/sudo.log"' | sudo tee /etc/sudoers.d/log
     
     # Enhanced sudo security (exact from blakkheim guide adapted for apt)
     sudo tee /etc/sudoers > /dev/null <<'EOF'
@@ -344,7 +363,7 @@ time_sync() {
     apt install -y openntpd
     
     # Disable systemd-timesyncd
-    sudo systemctl disable --now systemd-timesyncd
+    sudo systemctl disable --now systemd-timesyncd 2>/dev/null || warn "Could not disable systemd-timesyncd"
     
     # Configure OpenNTPD with quality servers (exact from guide)
     sudo tee /etc/openntpd/ntpd.conf > /dev/null <<'EOF'
@@ -354,19 +373,19 @@ server pool.ntp.org
 constraint from "https://example.com"
 EOF
     
-    sudo systemctl enable openntpd
-    sudo systemctl start openntpd
+    sudo systemctl enable openntpd 2>/dev/null || warn "Could not enable OpenNTPD"
+    sudo systemctl start openntpd 2>/dev/null || warn "Could not start OpenNTPD"
 }
 
 # Hardware security
 hardware_security() {
     log "Configuring hardware security..."
     
-    # Install rfkill (util-linux package - already installed)
     # RFKill setup mentioned in guide but blocking is optional
     log "RFKill available. To block wireless: sudo systemctl enable --now rfkill-block@all.service"
     
     # Blacklist uncommon filesystems (not explicitly in guide but common hardening)
+    sudo mkdir -p /etc/modprobe.d
     sudo tee /etc/modprobe.d/blacklist-rare-filesystems.conf > /dev/null <<'EOF'
 # Blacklist rare filesystems to reduce attack surface
 blacklist cramfs
@@ -379,7 +398,7 @@ blacklist udf
 EOF
     
     # Update initramfs
-    sudo update-initramfs -u
+    sudo update-initramfs -u 2>/dev/null || warn "Could not update initramfs (may not be available in container)"
 }
 
 # User security settings (exact from blakkheim guide)
@@ -392,20 +411,27 @@ user_security() {
     # Secure home directory permissions (exact from guide)
     sudo chmod -R go-rwx /home/debian
     
-    # Create tmpfs for user cache (exact from guide)
-    echo 'tmpfs /home/debian/.cache tmpfs rw,size=250M,noexec,noatime,nodev,uid=debian,gid=debian,mode=700 0 0' | sudo tee -a /etc/fstab
+    # Create tmpfs for user cache (exact from guide) - skip in container
+    if [ -f /etc/fstab ]; then
+        echo 'tmpfs /home/debian/.cache tmpfs rw,size=250M,noexec,noatime,nodev,uid=debian,gid=debian,mode=700 0 0' | sudo tee -a /etc/fstab
+    else
+        warn "No /etc/fstab found - skipping tmpfs cache (container environment)"
+    fi
 }
 
 # Hidden PIDs (from blakkheim guide miscellaneous section)
 hidden_pids() {
     log "Configuring hidden PIDs..."
     
-    # Hide processes from other users (mentioned in guide)
-    echo 'proc /proc proc defaults,hidepid=2,gid=proc 0 0' | sudo tee -a /etc/fstab
-    sudo groupadd -f proc
-    sudo usermod -aG proc debian
-    
-    log "Process hiding configured. Will take effect after reboot."
+    # Hide processes from other users (mentioned in guide) - skip in container
+    if [ -f /etc/fstab ]; then
+        echo 'proc /proc proc defaults,hidepid=2,gid=proc 0 0' | sudo tee -a /etc/fstab
+        sudo groupadd -f proc
+        sudo usermod -aG proc debian
+        log "Process hiding configured. Will take effect after reboot."
+    else
+        warn "No /etc/fstab found - skipping hidepid (container environment)"
+    fi
 }
 
 # DNSCrypt (from blakkheim guide miscellaneous section)
@@ -416,6 +442,7 @@ dns_security() {
     apt install -y dnscrypt-proxy
     
     # Basic dnscrypt-proxy configuration
+    sudo mkdir -p /etc/dnscrypt-proxy
     sudo tee /etc/dnscrypt-proxy/dnscrypt-proxy.toml > /dev/null <<'EOF'
 server_names = ['cloudflare', 'quad9-dnscrypt-ip4-nofilter-pri']
 listen_addresses = ['127.0.0.1:53']
@@ -432,14 +459,15 @@ keepalive = 30
 EOF
     
     # Configure system to use dnscrypt-proxy
+    sudo mkdir -p /etc/systemd/resolved.conf.d
     sudo tee /etc/systemd/resolved.conf > /dev/null <<'EOF'
 [Resolve]
 DNS=127.0.0.1
 DNSStubListener=no
 EOF
     
-    sudo systemctl disable systemd-resolved
-    sudo systemctl enable dnscrypt-proxy
+    sudo systemctl disable systemd-resolved 2>/dev/null || warn "Could not disable systemd-resolved"
+    sudo systemctl enable dnscrypt-proxy 2>/dev/null || warn "Could not enable dnscrypt-proxy"
     
     log "DNSCrypt configured. DNS queries will be encrypted."
 }
@@ -449,7 +477,7 @@ automatic_updates() {
     log "Configuring automatic security updates..."
     
     sudo apt install -y unattended-upgrades
-    sudo sed -i '0,/^#precedence ::ffff:0:0\/96/{s/^#//; s/10$/100/}' /etc/gai.conf
+    sudo sed -i '0,/^#precedence ::ffff:0:0\/96/{s/^#//; s/10$/100/}' /etc/gai.conf 2>/dev/null || warn "Could not update gai.conf"
 }
 
 # Audio security (exact from blakkheim guide)
@@ -483,7 +511,7 @@ Compress=yes
 SystemMaxUse=100M
 EOF
     
-    sudo systemctl restart systemd-journald
+    sudo systemctl restart systemd-journald 2>/dev/null || warn "Could not restart systemd-journald"
 }
 
 # Final system cleanup and verification
@@ -495,14 +523,14 @@ final_cleanup() {
     sudo apt autoremove --purge -y
     
     # Apply sysctl settings
-    sudo sysctl -p /etc/sysctl.conf 2>/dev/null
+    sudo sysctl -p /etc/sysctl.conf 2>/dev/null || warn "Could not apply main sysctl.conf"
     
     # Set secure permissions on sensitive files
-    sudo chmod 600 /etc/ssh/ssh_host_*_key
-    sudo chmod 644 /etc/ssh/ssh_host_*_key.pub
+    sudo chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || warn "Could not set SSH key permissions"
+    sudo chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || warn "Could not set SSH public key permissions"
     
     # Ensure proper ownership
-    sudo chown root:root /etc/ssh/ssh_host_*
+    sudo chown root:root /etc/ssh/ssh_host_* 2>/dev/null || warn "Could not set SSH key ownership"
 }
 
 # Main execution
@@ -605,12 +633,7 @@ EOF
     
     warn "REBOOT REQUIRED: Many security features require restart to activate properly."
     
-    read -p "Reboot now to activate all security features? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        log "Activating security features with reboot..."
-        sudo reboot
-    fi
+    echo "Hardening script completed successfully."
 }
 
 # Execute main function
