@@ -14,8 +14,6 @@ A comprehensive security hardening solution for Debian 12 systems, providing bot
 - [Advanced Configuration](#-advanced-configuration)
 - [Troubleshooting](#-troubleshooting)
 - [Security Analysis](#-security-analysis)
-- [Contributing](#-contributing)
-- [License](#-license)
 
 ## 🎯 Overview
 
@@ -628,48 +626,3 @@ docker commit debian12-hardening-test debian12-hardened:latest
 # Use for future comparisons or as base image
 docker run -d --name comparison-test debian12-hardened:latest
 ```
-
-## 📚 References and Credits
-
-### Original Sources
-
-- **debian12-hardening-script**: Original system hardening foundation
-- **blakkheim's Linux Security Guide**: Advanced kernel and system hardening
-- **systemd Security Documentation**: Service hardening best practices
-- **CIS Debian Linux Benchmark**: Security configuration guidelines
-
-### Technical Resources
-
-- [systemd.exec(5) Manual](https://www.freedesktop.org/software/systemd/man/systemd.exec.html)
-- [systemd Security Analysis](https://www.freedesktop.org/software/systemd/man/systemd-analyze.html)
-- [Linux Kernel Security](https://kernsec.org/wiki/index.php/Kernel_Self_Protection_Project)
-- [AppArmor Documentation](https://wiki.apparmor.net/)
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-### Disclaimer
-
-These scripts modify system configurations and security settings. While thoroughly tested, you should:
-
-1. **Test in non-production environments first**
-2. **Backup your system before applying**
-3. **Review scripts before execution**
-4. **Monitor system behavior after hardening**
-
-The authors are not responsible for any system damage or security issues resulting from the use of these scripts.
-
----
-
-## 🔗 Quick Links
-
-- **[Installation Guide](#-installation)** - Get started quickly
-- **[Troubleshooting](#-troubleshooting)** - Solve common issues
-- **[Advanced Config](#-advanced-configuration)** - Customize hardening
-- **[Security Analysis](#-security-analysis)** - Measure improvements
-- **[Contributing](#-contributing)** - Help improve the project
-
----
-
-**⚡ Ready to secure your Debian 12 system? Start with the [Quick Start](#-quick-start) guide!**
