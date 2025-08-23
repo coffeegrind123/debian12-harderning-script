@@ -21,14 +21,14 @@ A comprehensive security hardening solution for Debian 12 systems, providing bot
 
 This project provides two complementary security hardening scripts for Debian 12:
 
-1. **`install.sh`** - System-level hardening (kernel, firewall, applications)
+1. **`install-fixed.sh`** - System-level hardening (kernel, firewall, applications)
 2. **`systemd-hardening-script.sh`** - Service-level hardening (systemd services)
 
 Together, they provide **enterprise-grade security** with automated deployment and comprehensive protection against common attack vectors.
 
 ## ✨ Features
 
-### 🔧 System-Level Hardening (`install.sh`)
+### 🔧 System-Level Hardening (`install-fixed.sh`)
 
 - **Kernel Hardening**: 40+ sysctl security parameters
 - **Network Security**: nftables firewall with strict default-deny policy
@@ -53,14 +53,14 @@ Together, they provide **enterprise-grade security** with automated deployment a
 
 ```bash
 # 1. Clone or download the scripts
-wget https://raw.githubusercontent.com/your-repo/install.sh
-wget https://raw.githubusercontent.com/your-repo/systemd-hardening-script.sh
+wget https://raw.githubusercontent.com/coffeegrind123/debian12-harderning-script/main/install-fixed.sh
+wget https://raw.githubusercontent.com/coffeegrind123/debian12-harderning-script/main/systemd-hardening-script.sh
 
 # 2. Make executable
-chmod +x install.sh systemd-hardening-script.sh
+chmod +x install-fixed.sh systemd-hardening-script.sh
 
 # 3. Run system hardening (as root)
-sudo ./install.sh
+sudo ./install-fixed.sh
 
 # 4. Run service hardening (as root)
 sudo ./systemd-hardening-script.sh
@@ -71,7 +71,7 @@ sudo systemd-analyze security
 
 ## 📜 Scripts Description
 
-### 🔧 System Hardening Script (`install.sh`)
+### 🔧 System Hardening Script (`install-fixed.sh`)
 
 Based on the **debian12-hardening-script** with additional improvements and **blakkheim's security guide**.
 
@@ -143,35 +143,37 @@ Custom-developed script implementing **template-based progressive hardening**.
 - ✅ Physical servers
 - ✅ Virtual machines (KVM, VMware, VirtualBox)
 - ✅ Cloud instances (AWS, GCP, Azure, DigitalOcean)
-- ✅ Containers (with systemd support)
+- ✅ Containers (with systemd support) - **Perfect for testing!**
 - ✅ Bare metal installations
+
+> 💡 **Recommended**: Use Docker testing (see [Docker Testing Instructions](#-docker-testing-instructions)) to safely test the scripts before applying to production systems.
 
 ### Installation Steps
 
 1. **Download Scripts:**
    ```bash
    # Option 1: Direct download
-   curl -O https://raw.githubusercontent.com/your-repo/install.sh
-   curl -O https://raw.githubusercontent.com/your-repo/systemd-hardening-script.sh
+   curl -O https://raw.githubusercontent.com/coffeegrind123/debian12-harderning-script/main/install-fixed.sh
+   curl -O https://raw.githubusercontent.com/coffeegrind123/debian12-harderning-script/main/systemd-hardening-script.sh
    
    # Option 2: Clone repository
-   git clone https://github.com/your-repo/debian12-hardening.git
-   cd debian12-hardening
+   git clone https://github.com/coffeegrind123/debian12-harderning-script.git
+   cd debian12-harderning-script
    ```
 
 2. **Verify Scripts (Optional but Recommended):**
    ```bash
    # Check script integrity
-   sha256sum install.sh systemd-hardening-script.sh
+   sha256sum install-fixed.sh systemd-hardening-script.sh
    
    # Review scripts before execution
-   less install.sh
+   less install-fixed.sh
    less systemd-hardening-script.sh
    ```
 
 3. **Make Executable:**
    ```bash
-   chmod +x install.sh systemd-hardening-script.sh
+   chmod +x install-fixed.sh systemd-hardening-script.sh
    ```
 
 ## 🎮 Usage
@@ -180,7 +182,7 @@ Custom-developed script implementing **template-based progressive hardening**.
 
 ```bash
 # Step 1: System-level hardening (run first)
-sudo ./install.sh
+sudo ./install-fixed.sh
 
 # Step 2: Service-level hardening (run after system hardening)
 sudo ./systemd-hardening-script.sh
@@ -194,9 +196,9 @@ The system hardening script runs automatically but you can customize behavior:
 
 ```bash
 # Run with environment variables for customization
-SKIP_FIREJAIL=1 sudo ./install.sh              # Skip firejail (faster)
-DEBUG=1 sudo ./install.sh                      # Enable debug output  
-NO_REBOOT_PROMPT=1 sudo ./install.sh          # Skip reboot prompt
+SKIP_FIREJAIL=1 sudo ./install-fixed.sh              # Skip firejail (faster)
+DEBUG=1 sudo ./install-fixed.sh                      # Enable debug output  
+NO_REBOOT_PROMPT=1 sudo ./install-fixed.sh          # Skip reboot prompt
 ```
 
 #### Service Hardening Options
@@ -371,7 +373,7 @@ sudo apt autoclean
 sudo apt autoremove
 
 # Skip firejail installation (saves ~700MB)
-SKIP_FIREJAIL=1 sudo ./install.sh
+SKIP_FIREJAIL=1 sudo ./install-fixed.sh
 ```
 
 ### Debugging systemd Restrictions
@@ -484,12 +486,147 @@ We welcome contributions! Please see our contribution guidelines:
 
 ```bash
 # Set up development environment
-git clone https://github.com/your-repo/debian12-hardening.git
-cd debian12-hardening
+git clone https://github.com/coffeegrind123/debian12-harderning-script.git
+cd debian12-harderning-script
 
 # Test in container (recommended)
 docker run -it --privileged jrei/systemd-debian:12
 # Copy scripts and test inside container
+```
+
+## 🐳 Docker Testing Instructions
+
+### Quick Testing with Docker
+
+For safe testing without affecting your host system, use our Docker-based testing approach:
+
+#### Prerequisites
+- Docker installed and running
+- Scripts downloaded locally
+
+#### Step-by-Step Testing
+
+1. **Create systemd-enabled Debian 12 container:**
+   ```bash
+   # Create container with systemd support
+   docker run --privileged --cgroupns=host \
+     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+     --name debian12-hardening-test \
+     -d jrei/systemd-debian:12
+   
+   # Verify container is running
+   docker ps | grep debian12-hardening-test
+   ```
+
+2. **Copy scripts to container:**
+   ```bash
+   # Copy both hardening scripts
+   docker cp install-fixed.sh debian12-hardening-test:/root/
+   docker cp systemd-hardening-script.sh debian12-hardening-test:/root/
+   
+   # Make scripts executable
+   docker exec debian12-hardening-test chmod +x /root/install-fixed.sh /root/systemd-hardening-script.sh
+   ```
+
+3. **Check baseline security (before hardening):**
+   ```bash
+   # View current security posture
+   docker exec debian12-hardening-test systemd-analyze security | head -10
+   ```
+
+4. **Run system hardening:**
+   ```bash
+   # Execute system-level hardening (takes ~10-15 minutes)
+   docker exec debian12-hardening-test /bin/bash -c "cd /root && ./install-fixed.sh"
+   ```
+
+5. **Run service hardening:**
+   ```bash
+   # Execute service-level hardening (takes ~2-3 minutes)
+   docker exec debian12-hardening-test /bin/bash -c "cd /root && echo 'y' | ./systemd-hardening-script.sh"
+   ```
+
+6. **Verify security improvements:**
+   ```bash
+   # Check improved security scores
+   docker exec debian12-hardening-test systemd-analyze security | head -15
+   
+   # Verify services are running with hardening
+   docker exec debian12-hardening-test systemctl status ssh.service dbus.service openntpd.service --no-pager
+   
+   # Check hardened service configurations
+   docker exec debian12-hardening-test find /etc/systemd/system -name 'security.conf'
+   ```
+
+7. **Interactive testing (optional):**
+   ```bash
+   # Access container shell for manual testing
+   docker exec -it debian12-hardening-test /bin/bash
+   
+   # Inside container, you can:
+   # - Review configurations: ls /etc/systemd/system/*/security.conf
+   # - Check service status: systemctl status
+   # - View security analysis: systemd-analyze security
+   # - Test functionality: systemctl list-failed
+   ```
+
+8. **Cleanup after testing:**
+   ```bash
+   # Remove test container
+   docker stop debian12-hardening-test
+   docker rm debian12-hardening-test
+   ```
+
+#### Docker Testing Tips
+
+**✅ Advantages:**
+- Safe isolated environment
+- No impact on host system
+- Easy cleanup and reset
+- Perfect for testing and development
+- Consistent environment across different machines
+
+**⚠️ Limitations:**
+- Container environment may differ slightly from physical/VM systems
+- Some kernel-level features may behave differently
+- Firewall rules apply within container namespace
+- Boot parameters (GRUB) are not applicable
+
+#### Advanced Docker Testing
+
+**Test with volume mounts (for script development):**
+```bash
+# Mount current directory for real-time script editing
+docker run --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -v "$(pwd)":/scripts:ro \
+  --name debian12-dev-test \
+  -d jrei/systemd-debian:12
+
+# Run scripts from mounted volume
+docker exec debian12-dev-test /bin/bash -c "cd /scripts && chmod +x *.sh && ./install-fixed.sh"
+```
+
+**Multiple parallel tests:**
+```bash
+# Test different configurations simultaneously
+for i in {1..3}; do
+  docker run --privileged --cgroupns=host \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+    --name "debian12-test-${i}" \
+    -d jrei/systemd-debian:12
+done
+
+# Run different test scenarios on each
+```
+
+**Save container state for analysis:**
+```bash
+# After hardening, save the hardened container as image
+docker commit debian12-hardening-test debian12-hardened:latest
+
+# Use for future comparisons or as base image
+docker run -d --name comparison-test debian12-hardened:latest
 ```
 
 ## 📚 References and Credits
