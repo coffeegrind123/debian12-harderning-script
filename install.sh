@@ -845,26 +845,157 @@ hidden_pids() {
 
 # DNSCrypt (from blakkheim guide miscellaneous section)
 dns_security() {
-    log "Configuring DNSCrypt..."
+    log "Installing and configuring DNSCrypt manually..."
     
-    # Install dnscrypt-proxy (mentioned in blakkheim guide)
-    apt install -y dnscrypt-proxy
+    # Install dnscrypt-proxy manually from GitHub releases
+    cd /tmp
     
-    # Basic dnscrypt-proxy configuration
+    # Download latest version
+    wget https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.14/dnscrypt-proxy-linux_x86_64-2.1.14.tar.gz 2>/dev/null || {
+        warn "Could not download dnscrypt-proxy, skipping DNS encryption"
+        return 0
+    }
+    
+    # Extract and install
+    tar -xzf dnscrypt-proxy-linux_x86_64-2.1.14.tar.gz 2>/dev/null || {
+        warn "Could not extract dnscrypt-proxy archive"
+        return 0
+    }
+    
+    sudo cp linux-x86_64/dnscrypt-proxy /usr/local/bin/
+    sudo chmod +x /usr/local/bin/dnscrypt-proxy
+    
+    # Create configuration directory
     sudo mkdir -p /etc/dnscrypt-proxy
+    
+    # Create dnscrypt-proxy configuration
     sudo tee /etc/dnscrypt-proxy/dnscrypt-proxy.toml > /dev/null <<'EOF'
-server_names = ['cloudflare', 'quad9-dnscrypt-ip4-nofilter-pri']
+##############################################
+#                                            #
+#        dnscrypt-proxy configuration        #
+#                                            #
+##############################################
+
+server_names = ['cloudflare', 'quad9-dnscrypt-ip4-nofilter-pri', 'google']
+
 listen_addresses = ['127.0.0.1:53']
+
 max_clients = 250
+
 ipv4_servers = true
 ipv6_servers = false
+
 dnscrypt_servers = true
 doh_servers = true
+
 require_dnssec = true
 require_nolog = true
 require_nofilter = true
+
+disabled_server_names = []
+
+force_tcp = false
 timeout = 5000
 keepalive = 30
+
+cert_refresh_delay = 240
+dnscrypt_ephemeral_keys = false
+tls_disable_session_tickets = false
+
+fallback_resolvers = ['9.9.9.9:53', '8.8.8.8:53']
+ignore_system_dns = false
+
+netprobe_timeout = 60
+netprobe_address = '9.9.9.9:53'
+
+log_files_max_size = 10
+log_files_max_age = 7
+log_files_max_backups = 1
+
+block_ipv6 = false
+
+reject_ttl = 600
+
+cache = true
+cache_size = 4096
+cache_min_ttl = 2400
+cache_max_ttl = 86400
+cache_neg_min_ttl = 60
+cache_neg_max_ttl = 600
+
+[query_log]
+  # file = '/var/log/dnscrypt-proxy/query.log'
+
+[nx_log]
+  # file = '/var/log/dnscrypt-proxy/nx.log'
+
+[blacklist]
+
+[ip_blacklist]
+
+[whitelist]
+
+[schedules]
+
+[sources]
+
+  [sources.'public-resolvers']
+  urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/public-resolvers.md', 'https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md']
+  cache_file = '/var/cache/dnscrypt-proxy/public-resolvers.md'
+  minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
+  refresh_delay = 72
+  prefix = ''
+
+  [sources.'relays']
+  urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/relays.md', 'https://download.dnscrypt.info/resolvers-list/v3/relays.md']
+  cache_file = '/var/cache/dnscrypt-proxy/relays.md'
+  minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
+  refresh_delay = 72
+  prefix = ''
+
+[static]
+EOF
+
+    # Create cache directory
+    sudo mkdir -p /var/cache/dnscrypt-proxy
+    sudo mkdir -p /var/log/dnscrypt-proxy
+    
+    # Create dnscrypt-proxy user
+    sudo useradd -r -d /var/cache/dnscrypt-proxy -s /usr/sbin/nologin dnscrypt-proxy 2>/dev/null || true
+    sudo chown -R dnscrypt-proxy:dnscrypt-proxy /var/cache/dnscrypt-proxy
+    sudo chown -R dnscrypt-proxy:dnscrypt-proxy /var/log/dnscrypt-proxy
+    
+    # Create systemd service
+    sudo tee /etc/systemd/system/dnscrypt-proxy.service > /dev/null <<'EOF'
+[Unit]
+Description=DNSCrypt client proxy
+Documentation=https://github.com/DNSCrypt/dnscrypt-proxy/wiki
+After=network.target
+Before=nss-lookup.target
+Wants=nss-lookup.target
+
+[Service]
+Type=simple
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/local/bin/dnscrypt-proxy -config /etc/dnscrypt-proxy/dnscrypt-proxy.toml
+User=dnscrypt-proxy
+Group=dnscrypt-proxy
+Restart=always
+RestartSec=5
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/cache/dnscrypt-proxy /var/log/dnscrypt-proxy
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @cpu-emulation @debug @keyring @module @mount @obsolete @raw-io @reboot @swap
+
+[Install]
+WantedBy=multi-user.target
 EOF
     
     # Configure system to use dnscrypt-proxy
@@ -873,10 +1004,46 @@ EOF
 [Resolve]
 DNS=127.0.0.1
 DNSStubListener=no
+DNSSEC=yes
 EOF
     
+    # Backup original resolv.conf
+    sudo cp /etc/resolv.conf /etc/resolv.conf.backup 2>/dev/null || true
+    
+    # Disable systemd-resolved stub listener and restart
     sudo systemctl disable systemd-resolved 2>/dev/null || warn "Could not disable systemd-resolved"
+    sudo systemctl stop systemd-resolved 2>/dev/null || warn "Could not stop systemd-resolved"
+    
+    # Create manual resolv.conf pointing to dnscrypt-proxy
+    sudo tee /etc/resolv.conf > /dev/null <<'EOF'
+# Generated by dnscrypt-proxy hardening script
+nameserver 127.0.0.1
+options edns0
+EOF
+    
+    # Make resolv.conf immutable to prevent overwriting
+    sudo chattr +i /etc/resolv.conf 2>/dev/null || warn "Could not make resolv.conf immutable"
+    
+    # Reload systemd and enable dnscrypt-proxy
+    sudo systemctl daemon-reload
     sudo systemctl enable dnscrypt-proxy 2>/dev/null || warn "Could not enable dnscrypt-proxy"
+    sudo systemctl start dnscrypt-proxy 2>/dev/null || warn "Could not start dnscrypt-proxy"
+    
+    # Wait a moment for service to start
+    sleep 3
+    
+    # Check if dnscrypt-proxy is running
+    if sudo systemctl is-active --quiet dnscrypt-proxy; then
+        log "DNSCrypt-proxy installed and running successfully"
+        log "DNS queries will be encrypted and authenticated"
+    else
+        warn "DNSCrypt-proxy may not be running properly"
+        log "Check status with: sudo systemctl status dnscrypt-proxy"
+    fi
+    
+    # Cleanup
+    cd /
+    rm -rf /tmp/dnscrypt-proxy-linux_x86_64-2.1.14.tar.gz /tmp/linux-x86_64 2>/dev/null || true
     
     log "DNSCrypt configured. DNS queries will be encrypted."
 }
