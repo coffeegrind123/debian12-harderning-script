@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Complete Debian 12 Security Hardening Script - Fixed Version
+# Complete Debian 12 Security Hardening Script with Docker - Final Version
 # Based on original script + blakkheim's guide (https://vez.mrsk.me/linux-hardening)
 # Run as root or with sudo privileges
 
 set -euo pipefail
 
-echo "Starting comprehensive Debian 12 security hardening..."
+echo "Starting comprehensive Debian 12 security hardening with Docker..."
 
 # Color codes for output
 RED='\033[0;31m'
@@ -53,30 +53,437 @@ basic_hardening() {
     sudo systemctl daemon-reload 2>/dev/null || warn "Could not reload systemd daemon"
 }
 
-# Original nftables firewall (preserved)
-nftables_firewall() {
-    log "Configuring nftables firewall (original)..."
+# Modified iptables firewall (replacing nftables)
+iptables_firewall() {
+    log "Configuring iptables firewall (replacing nftables)..."
     
-    sudo apt install -y nftables
-    sudo apt purge -y iptables-persistent netfilter-persistent 2>/dev/null || true
+    # Install iptables and related tools
+    sudo apt install -y iptables arptables ebtables
     
-    sudo nft flush ruleset
-    sudo nft add table inet filter
-    sudo nft add chain inet filter input '{ type filter hook input priority 0 ; policy drop ; }'
-    sudo nft add chain inet filter forward '{ type filter hook forward priority 0 ; policy drop ; }'
-    sudo nft add chain inet filter output '{ type filter hook output priority 0 ; policy accept ; }'
-    sudo nft add rule inet filter input iif lo accept
-    sudo nft add rule inet filter input iif != lo ip daddr 127.0.0.0/8 drop
-    sudo nft add rule inet filter input ct state established,related accept
-    sudo nft add rule inet filter input tcp dport 22 ct state new accept
-    sudo nft add rule inet filter input tcp dport 31926 ct state new accept
-    sudo nft add rule inet filter input tcp dport 80 ct state new accept
-    sudo nft add rule inet filter input tcp dport 443 ct state new accept
-    sudo nft add rule inet filter input ct state new accept
+    # Remove nftables
+    sudo apt purge -y nftables netfilter-persistent 2>/dev/null || true
     
-    sudo mkdir -p /etc/nftables
-    sudo nft list ruleset > /etc/nftables/nftables.conf
-    sudo systemctl enable nftables 2>/dev/null || warn "Could not enable nftables service"
+    # Set legacy alternatives
+    sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || warn "Could not set iptables alternative"
+    sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || warn "Could not set ip6tables alternative"
+    sudo update-alternatives --set arptables /usr/sbin/arptables-legacy 2>/dev/null || warn "Could not set arptables alternative"
+    sudo update-alternatives --set ebtables /usr/sbin/ebtables-legacy 2>/dev/null || warn "Could not set ebtables alternative"
+    
+    # Clear existing rules
+    sudo iptables -F
+    
+    # Configure iptables rules
+    sudo iptables -A INPUT -i lo -j ACCEPT
+    sudo iptables -A INPUT ! -i lo -d 127.0.0.0/8 -j DROP
+    sudo iptables -A OUTPUT -j ACCEPT
+    sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    sudo iptables -A INPUT -p tcp -m state --state NEW --dport 22 -j ACCEPT
+    sudo iptables -A INPUT -p tcp -m state --state NEW --dport 31926 -j ACCEPT
+    sudo iptables -A INPUT -p tcp -m state --state NEW --dport 443 -j ACCEPT
+    sudo iptables -A INPUT -m state --state NEW -j ACCEPT
+    sudo iptables -A INPUT -j DROP
+    
+    # Set default policies
+    sudo iptables --policy INPUT DROP
+    sudo iptables --policy FORWARD DROP
+    sudo iptables --policy OUTPUT DROP
+    
+    # Install and configure iptables-persistent to save rules
+    sudo apt install -y iptables-persistent
+    
+    # Save current rules
+    sudo mkdir -p /etc/iptables
+    sudo iptables-save > /etc/iptables/rules.v4 2>/dev/null || warn "Could not save iptables rules"
+    sudo ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || warn "Could not save ip6tables rules"
+    
+    log "iptables firewall configured and rules saved"
+}
+
+# Docker setup and configuration
+docker_setup() {
+    log "Installing and configuring Docker..."
+    
+    # Install prerequisites
+    sudo apt update
+    sudo apt install -y \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+    
+    # Add Docker's official GPG key
+    sudo mkdir -m 0755 -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || warn "Could not add Docker GPG key"
+    
+    # Set up the repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Install Docker Engine
+    sudo apt update
+    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # Add debian user to docker group
+    sudo usermod -aG docker debian
+    
+    # Enable and start Docker service
+    sudo systemctl enable docker 2>/dev/null || warn "Could not enable Docker service"
+    sudo systemctl start docker 2>/dev/null || warn "Could not start Docker service"
+    
+    # Configure Docker daemon for security
+    sudo mkdir -p /etc/docker
+    sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "10m",
+        "max-file": "3"
+    },
+    "live-restore": true,
+    "userland-proxy": false,
+    "no-new-privileges": true,
+    "seccomp-profile": "/etc/docker/seccomp.json",
+    "storage-driver": "overlay2"
+}
+EOF
+    
+    # Create Docker seccomp profile for additional security
+    sudo tee /etc/docker/seccomp.json > /dev/null <<'EOF'
+{
+    "defaultAction": "SCMP_ACT_ERRNO",
+    "archMap": [
+        {
+            "architecture": "SCMP_ARCH_X86_64",
+            "subArchitectures": [
+                "SCMP_ARCH_X86",
+                "SCMP_ARCH_X32"
+            ]
+        }
+    ],
+    "syscalls": [
+        {
+            "names": [
+                "accept",
+                "accept4",
+                "access",
+                "adjtimex",
+                "alarm",
+                "bind",
+                "brk",
+                "capget",
+                "capset",
+                "chdir",
+                "chmod",
+                "chown",
+                "chown32",
+                "clock_getres",
+                "clock_gettime",
+                "clock_nanosleep",
+                "close",
+                "connect",
+                "copy_file_range",
+                "creat",
+                "dup",
+                "dup2",
+                "dup3",
+                "epoll_create",
+                "epoll_create1",
+                "epoll_ctl",
+                "epoll_ctl_old",
+                "epoll_pwait",
+                "epoll_wait",
+                "epoll_wait_old",
+                "eventfd",
+                "eventfd2",
+                "execve",
+                "execveat",
+                "exit",
+                "exit_group",
+                "faccessat",
+                "fadvise64",
+                "fadvise64_64",
+                "fallocate",
+                "fanotify_mark",
+                "fchdir",
+                "fchmod",
+                "fchmodat",
+                "fchown",
+                "fchown32",
+                "fchownat",
+                "fcntl",
+                "fcntl64",
+                "fdatasync",
+                "fgetxattr",
+                "flistxattr",
+                "flock",
+                "fork",
+                "fremovexattr",
+                "fsetxattr",
+                "fstat",
+                "fstat64",
+                "fstatat64",
+                "fstatfs",
+                "fstatfs64",
+                "fsync",
+                "ftruncate",
+                "ftruncate64",
+                "futex",
+                "futimesat",
+                "getcpu",
+                "getcwd",
+                "getdents",
+                "getdents64",
+                "getegid",
+                "getegid32",
+                "geteuid",
+                "geteuid32",
+                "getgid",
+                "getgid32",
+                "getgroups",
+                "getgroups32",
+                "getitimer",
+                "getpeername",
+                "getpgid",
+                "getpgrp",
+                "getpid",
+                "getppid",
+                "getpriority",
+                "getrandom",
+                "getresgid",
+                "getresgid32",
+                "getresuid",
+                "getresuid32",
+                "getrlimit",
+                "get_robust_list",
+                "getrusage",
+                "getsid",
+                "getsockname",
+                "getsockopt",
+                "get_thread_area",
+                "gettid",
+                "gettimeofday",
+                "getuid",
+                "getuid32",
+                "getxattr",
+                "inotify_add_watch",
+                "inotify_init",
+                "inotify_init1",
+                "inotify_rm_watch",
+                "io_cancel",
+                "ioctl",
+                "io_destroy",
+                "io_getevents",
+                "ioprio_get",
+                "ioprio_set",
+                "io_setup",
+                "io_submit",
+                "ipc",
+                "kill",
+                "lchown",
+                "lchown32",
+                "lgetxattr",
+                "link",
+                "linkat",
+                "listen",
+                "listxattr",
+                "llistxattr",
+                "lremovexattr",
+                "lseek",
+                "lsetxattr",
+                "lstat",
+                "lstat64",
+                "madvise",
+                "memfd_create",
+                "mincore",
+                "mkdir",
+                "mkdirat",
+                "mknod",
+                "mknodat",
+                "mlock",
+                "mlock2",
+                "mlockall",
+                "mmap",
+                "mmap2",
+                "mprotect",
+                "mq_getsetattr",
+                "mq_notify",
+                "mq_open",
+                "mq_timedreceive",
+                "mq_timedsend",
+                "mq_unlink",
+                "mremap",
+                "msgctl",
+                "msgget",
+                "msgrcv",
+                "msgsnd",
+                "msync",
+                "munlock",
+                "munlockall",
+                "munmap",
+                "nanosleep",
+                "newfstatat",
+                "_newselect",
+                "open",
+                "openat",
+                "pause",
+                "pipe",
+                "pipe2",
+                "poll",
+                "ppoll",
+                "prctl",
+                "pread64",
+                "preadv",
+                "prlimit64",
+                "pselect6",
+                "ptrace",
+                "pwrite64",
+                "pwritev",
+                "read",
+                "readahead",
+                "readlink",
+                "readlinkat",
+                "readv",
+                "recv",
+                "recvfrom",
+                "recvmmsg",
+                "recvmsg",
+                "remap_file_pages",
+                "removexattr",
+                "rename",
+                "renameat",
+                "renameat2",
+                "restart_syscall",
+                "rmdir",
+                "rt_sigaction",
+                "rt_sigpending",
+                "rt_sigprocmask",
+                "rt_sigqueueinfo",
+                "rt_sigreturn",
+                "rt_sigsuspend",
+                "rt_sigtimedwait",
+                "rt_tgsigqueueinfo",
+                "sched_getaffinity",
+                "sched_getattr",
+                "sched_getparam",
+                "sched_get_priority_max",
+                "sched_get_priority_min",
+                "sched_getscheduler",
+                "sched_rr_get_interval",
+                "sched_setaffinity",
+                "sched_setattr",
+                "sched_setparam",
+                "sched_setscheduler",
+                "sched_yield",
+                "seccomp",
+                "select",
+                "semctl",
+                "semget",
+                "semop",
+                "semtimedop",
+                "send",
+                "sendfile",
+                "sendfile64",
+                "sendmmsg",
+                "sendmsg",
+                "sendto",
+                "setfsgid",
+                "setfsgid32",
+                "setfsuid",
+                "setfsuid32",
+                "setgid",
+                "setgid32",
+                "setgroups",
+                "setgroups32",
+                "setitimer",
+                "setpgid",
+                "setpriority",
+                "setregid",
+                "setregid32",
+                "setresgid",
+                "setresgid32",
+                "setresuid",
+                "setresuid32",
+                "setreuid",
+                "setreuid32",
+                "setrlimit",
+                "set_robust_list",
+                "setsid",
+                "setsockopt",
+                "set_thread_area",
+                "set_tid_address",
+                "setuid",
+                "setuid32",
+                "setxattr",
+                "shmat",
+                "shmctl",
+                "shmdt",
+                "shmget",
+                "shutdown",
+                "sigaltstack",
+                "signalfd",
+                "signalfd4",
+                "sigreturn",
+                "socket",
+                "socketcall",
+                "socketpair",
+                "splice",
+                "stat",
+                "stat64",
+                "statfs",
+                "statfs64",
+                "statx",
+                "symlink",
+                "symlinkat",
+                "sync",
+                "sync_file_range",
+                "syncfs",
+                "sysinfo",
+                "tee",
+                "tgkill",
+                "time",
+                "timer_create",
+                "timer_delete",
+                "timerfd_create",
+                "timerfd_gettime",
+                "timerfd_settime",
+                "timer_getoverrun",
+                "timer_gettime",
+                "timer_settime",
+                "times",
+                "tkill",
+                "truncate",
+                "truncate64",
+                "ugetrlimit",
+                "umask",
+                "uname",
+                "unlink",
+                "unlinkat",
+                "utime",
+                "utimensat",
+                "utimes",
+                "vfork",
+                "vmsplice",
+                "wait4",
+                "waitid",
+                "waitpid",
+                "write",
+                "writev"
+            ],
+            "action": "SCMP_ACT_ALLOW"
+        }
+    ]
+}
+EOF
+    
+    # Set proper permissions for Docker files
+    sudo chmod 600 /etc/docker/daemon.json 2>/dev/null || warn "Could not set Docker daemon.json permissions"
+    sudo chmod 600 /etc/docker/seccomp.json 2>/dev/null || warn "Could not set Docker seccomp.json permissions"
+    
+    # Restart Docker to apply new configuration
+    sudo systemctl restart docker 2>/dev/null || warn "Could not restart Docker service"
+    
+    log "Docker installed and configured securely"
 }
 
 # Enhanced package manager security - fixed for modern Debian
@@ -328,7 +735,7 @@ EOF
     sudo systemctl restart sshd 2>/dev/null || sudo systemctl restart ssh 2>/dev/null || warn "Could not restart SSH service"
 }
 
-# Enhanced sudo configuration (exact from blakkheim guide)
+# Enhanced sudo configuration (exact from blakkheim guide with Docker)
 enhanced_sudo() {
     log "Configuring enhanced sudo settings..."
     
@@ -336,7 +743,7 @@ enhanced_sudo() {
     sudo mkdir -p /etc/sudoers.d
     printf 'Defaults        logfile="/var/log/sudo.log"' | sudo tee /etc/sudoers.d/log
     
-    # Enhanced sudo security (exact from blakkheim guide adapted for apt)
+    # Enhanced sudo security (exact from blakkheim guide adapted for apt + Docker)
     sudo tee /etc/sudoers > /dev/null <<'EOF'
 Defaults env_reset
 Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -348,10 +755,12 @@ root    ALL=(ALL:ALL) ALL
 Cmnd_Alias PACMAN = /usr/bin/apt update, /usr/bin/apt upgrade
 Cmnd_Alias REBOOT = /sbin/reboot ""
 Cmnd_Alias SHUTDOWN = /sbin/poweroff ""
+Cmnd_Alias DOCKER = /usr/bin/docker, /usr/bin/docker-compose
 
 debian ALL=(root) NOPASSWD: PACMAN
 debian ALL=(root) NOPASSWD: REBOOT
 debian ALL=(root) NOPASSWD: SHUTDOWN
+debian ALL=(root) NOPASSWD: DOCKER
 EOF
 }
 
@@ -535,7 +944,7 @@ final_cleanup() {
 
 # Main execution
 main() {
-    log "Starting comprehensive Debian 12 security hardening..."
+    log "Starting comprehensive Debian 12 security hardening with Docker..."
     
     # Check if running as root
     if [[ $EUID -ne 0 ]]; then
@@ -547,7 +956,8 @@ main() {
     basic_hardening
     package_security
     kernel_hardening
-    nftables_firewall
+    iptables_firewall  # Changed from nftables_firewall
+    docker_setup       # Added Docker setup
     application_sandboxing
     enhanced_ssh
     enhanced_sudo
@@ -561,7 +971,7 @@ main() {
     miscellaneous_setup
     final_cleanup
     
-    log "Comprehensive security hardening completed!"
+    log "Comprehensive security hardening with Docker completed!"
     
     cat << 'EOF'
 
@@ -577,14 +987,20 @@ main() {
 ║ • User account 'debian' created with secure permissions                      ║
 ║                                                                              ║
 ║ NETWORK SECURITY                                                             ║
-║ • nftables firewall configured (ports 22, 31926, 80, 443)                    ║
+║ • iptables firewall configured (ports 22, 31926, 443)                       ║
 ║ • HTTPS-only package repositories                                            ║
 ║ • Network stack hardening (ICMP, redirects, source routing)                  ║
 ║ • DNSCrypt proxy for encrypted DNS queries                                   ║
 ║                                                                              ║
+║ DOCKER CONTAINERIZATION                                                      ║
+║ • Docker CE installed and configured securely                                ║
+║ • Secure Docker daemon configuration with seccomp profile                    ║
+║ • User 'debian' added to docker group                                        ║
+║ • Docker management commands in sudoers                                      ║
+║                                                                              ║
 ║ ACCESS CONTROL                                                               ║
 ║ • SSH hardened (no root, key-only, restricted algorithms)                    ║
-║ • Sudo configured for passwordless system updates/reboot                     ║
+║ • Sudo configured for passwordless system updates/reboot/docker              ║
 ║ • User processes hidden from other users (hidepid=2)                         ║
 ║ • Secure umask (077) for new files                                           ║
 ║                                                                              ║
@@ -620,6 +1036,7 @@ main() {
 ║ • Original user hardening script                                             ║
 ║ • blakkheim's "Linux Security Hardening and Other Tweaks"                    ║
 ║   (Last updated: 05/07/2025)                                                 ║
+║ • Docker official documentation and security best practices                  ║
 ║                                                                              ║
 ║ REBOOT REQUIRED FOR:                                                         ║
 ║   • Kernel security parameters to take effect                                ║
