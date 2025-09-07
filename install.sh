@@ -1132,7 +1132,7 @@ main() {
     hardware_security
     user_security
     hidden_pids
-    dns_security
+    #dns_security
     automatic_updates
     audio_security
     miscellaneous_setup
